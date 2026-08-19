@@ -1,360 +1,219 @@
-import tkinter as tk
-from tkinter import messagebox
+import streamlit as st
 import pandas as pd
-import pickle
+import json
 import os
 from datetime import datetime
 import matplotlib.pyplot as plt
 
-# ======================== DATA STORAGE ========================
-monthly_income = {}      # Stores income sources for each month
-monthly_budget = {}      # Stores budget categories for each month
-expense_records = []     # Stores all expenses (month, date, category, amount)
-account_balance = {}     # Tracks balance for each month
+# ======================== CONFIG ========================
+st.set_page_config(page_title="Personal Finance Manager", page_icon="💰", layout="centered")
+DATA_FILE = "finance_data.json"
 
-# ======================== FILE OPERATIONS ========================
+# ======================== DATA STORAGE ========================
+def load_data():
+    """Load financial data from file, or initialize empty structures."""
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                data = json.load(f)
+                return (
+                    data.get("monthly_income", {}),
+                    data.get("monthly_budget", {}),
+                    data.get("expense_records", []),
+                    data.get("account_balance", {}),
+                )
+        except Exception as e:
+            st.error(f"Could not load data: {e}")
+    return {}, {}, [], {}
+
 def save_data():
     """Save all financial data to a file for persistence."""
     data = {
-        "monthly_income": monthly_income,
-        "monthly_budget": monthly_budget,
-        "expense_records": expense_records,
-        "account_balance": account_balance
+        "monthly_income": st.session_state.monthly_income,
+        "monthly_budget": st.session_state.monthly_budget,
+        "expense_records": st.session_state.expense_records,
+        "account_balance": st.session_state.account_balance,
     }
     try:
-        with open("finance_data.pkl", "wb") as file:
-            pickle.dump(data, file)
+        with open(DATA_FILE, "w") as f:
+            json.dump(data, f, indent=2)
     except Exception as e:
-        messagebox.showerror("Save Error", f"Could not save data: {e}")
+        st.error(f"Could not save data: {e}")
 
-def load_data():
-    """Load financial data from file when program starts."""
-    global monthly_income, monthly_budget, expense_records, account_balance
-    try:
-        if os.path.exists("finance_data.pkl"):
-            with open("finance_data.pkl", "rb") as file:
-                data = pickle.load(file)
-                monthly_income = data.get("monthly_income", {})
-                monthly_budget = data.get("monthly_budget", {})
-                expense_records = data.get("expense_records", [])
-                account_balance = data.get("account_balance", {})
-    except Exception as e:
-        messagebox.showerror("Load Error", f"Could not load data: {e}")
+# Initialize session state once
+if "monthly_income" not in st.session_state:
+    (
+        st.session_state.monthly_income,
+        st.session_state.monthly_budget,
+        st.session_state.expense_records,
+        st.session_state.account_balance,
+    ) = load_data()
 
-# ======================== INCOME MANAGEMENT ========================
-def add_income_gui():
-    """Open window to add monthly income sources."""
-    income_window = tk.Toplevel(root)
-    income_window.title("Add Monthly Income")
-    income_window.geometry("400x300")
+if "income_rows" not in st.session_state:
+    st.session_state.income_rows = 1
+if "budget_rows" not in st.session_state:
+    st.session_state.budget_rows = 1
 
-    # Month input
-    tk.Label(income_window, text="Enter Month (01-12):", font=("Arial", 10)).pack(pady=5)
-    month_entry = tk.Entry(income_window, width=20)
-    month_entry.pack()
+# ======================== HEADER ========================
+st.markdown(
+    "<h1 style='text-align:center; color:white; background-color:#4CAF50; "
+    "padding:12px; border-radius:8px;'>💰 Personal Finance Manager 💰</h1>",
+    unsafe_allow_html=True,
+)
+st.write("")
 
-    # Dynamic income sources
-    income_sources = []
+tabs = st.tabs(["📊 Income", "💼 Budget", "💸 Expense", "🥧 Chart", "📈 Report"])
 
-    def add_income_source():
-        frame = tk.Frame(income_window)
-        frame.pack(pady=5)
+# ======================== INCOME TAB ========================
+with tabs[0]:
+    st.subheader("Add Monthly Income")
+    month = st.text_input("Month (01-12)", key="income_month")
 
-        tk.Label(frame, text="Source Name:").pack(side=tk.LEFT, padx=5)
-        source_name = tk.Entry(frame, width=15)
-        source_name.pack(side=tk.LEFT, padx=5)
+    st.write("Income Sources")
+    if st.button("+ Add Source"):
+        st.session_state.income_rows += 1
 
-        tk.Label(frame, text="Amount:").pack(side=tk.LEFT, padx=5)
-        source_amount = tk.Entry(frame, width=10)
-        source_amount.pack(side=tk.LEFT, padx=5)
+    sources = []
+    for i in range(st.session_state.income_rows):
+        c1, c2 = st.columns(2)
+        name = c1.text_input(f"Source name {i+1}", key=f"inc_name_{i}")
+        amount = c2.number_input(f"Amount {i+1}", min_value=0, step=100, key=f"inc_amt_{i}")
+        sources.append((name, amount))
 
-        income_sources.append((source_name, source_amount))
+    if st.button("Submit Income", type="primary"):
+        if not month or not month.isdigit() or not (1 <= int(month) <= 12):
+            st.error("Month must be 01-12")
+        else:
+            month_key = month.zfill(2)
+            income_dict = {name: amt for name, amt in sources if name and amt > 0}
+            if not income_dict:
+                st.error("Add at least one income source")
+            else:
+                total_income = sum(income_dict.values())
+                st.session_state.monthly_income[month_key] = income_dict
+                st.session_state.account_balance[month_key] = total_income
+                save_data()
+                st.success(f"Income Added! Total: ₹{total_income}")
 
-    def submit_income():
-        month = month_entry.get().strip()
+# ======================== BUDGET TAB ========================
+with tabs[1]:
+    st.subheader("Add Monthly Budget")
+    b_month = st.text_input("Month (01-12)", key="budget_month")
 
-        # Validation
-        if not month:
-            messagebox.showerror("Error", "Please enter a month")
-            return
-        
-        if not month.isdigit() or not (1 <= int(month) <= 12):
-            messagebox.showerror("Error", "Month must be 01-12")
-            return
+    st.write("Budget Categories")
+    if st.button("+ Add Category"):
+        st.session_state.budget_rows += 1
 
-        income_dict = {}
-        total_income = 0
+    categories = []
+    for i in range(st.session_state.budget_rows):
+        c1, c2 = st.columns(2)
+        cat = c1.text_input(f"Category {i+1}", key=f"bud_cat_{i}")
+        amt = c2.number_input(f"Amount {i+1}", min_value=0, step=100, key=f"bud_amt_{i}")
+        categories.append((cat, amt))
 
-        for source_name_widget, source_amount_widget in income_sources:
-            source_name = source_name_widget.get().strip()
-            source_amount_str = source_amount_widget.get().strip()
+    if st.button("Submit Budget", type="primary"):
+        if not b_month or not b_month.isdigit() or not (1 <= int(b_month) <= 12):
+            st.error("Month must be 01-12")
+        else:
+            month_key = b_month.zfill(2)
+            budget_dict = {cat: amt for cat, amt in categories if cat and amt > 0}
+            if not budget_dict:
+                st.error("Add at least one budget category")
+            else:
+                st.session_state.monthly_budget[month_key] = budget_dict
+                save_data()
+                st.success("Budget Added Successfully!")
 
-            if source_name and source_amount_str:
-                try:
-                    amount = int(source_amount_str)
-                    if amount < 0:
-                        messagebox.showerror("Error", "Amount cannot be negative")
-                        return
-                    income_dict[source_name] = amount
-                    total_income += amount
-                except ValueError:
-                    messagebox.showerror("Error", "Enter valid numbers for amounts")
-                    return
+# ======================== EXPENSE TAB ========================
+with tabs[2]:
+    st.subheader("Add Expense")
+    e_month = st.text_input("Month (01-12)", key="exp_month")
+    e_date = st.text_input("Date (DD-MM-YYYY)", key="exp_date")
+    e_category = st.text_input("Category", key="exp_category")
+    e_amount = st.number_input("Amount (₹)", min_value=0, step=50, key="exp_amount")
 
-        if not income_dict:
-            messagebox.showerror("Error", "Add at least one income source")
-            return
+    if st.button("Add Expense", type="primary"):
+        if not e_month or not e_date or not e_category or e_amount <= 0:
+            st.error("Please fill all fields")
+        elif not e_month.isdigit() or not (1 <= int(e_month) <= 12):
+            st.error("Month must be 01-12")
+        else:
+            try:
+                datetime.strptime(e_date, "%d-%m-%Y")
+            except ValueError:
+                st.error("Date format must be DD-MM-YYYY")
+                st.stop()
 
-        monthly_income[month] = income_dict
-        account_balance[month] = total_income
+            month_key = e_month.zfill(2)
+            st.session_state.expense_records.append([month_key, e_date, e_category, e_amount])
+            st.session_state.account_balance[month_key] = (
+                st.session_state.account_balance.get(month_key, 0) - e_amount
+            )
+            save_data()
+            remaining = st.session_state.account_balance[month_key]
+            st.success(f"Expense Added! Remaining Balance: ₹{remaining}")
 
-        save_data()
-        messagebox.showinfo("Success", f"Income Added!\nTotal: ₹{total_income}")
-        income_window.destroy()
-
-    tk.Button(income_window, text="Add Source", command=add_income_source, bg="lightblue").pack(pady=5)
-    tk.Button(income_window, text="Submit", command=submit_income, bg="lightgreen").pack(pady=5)
-
-# ======================== BUDGET MANAGEMENT ========================
-def add_budget_gui():
-    """Open window to add monthly budget categories."""
-    budget_window = tk.Toplevel(root)
-    budget_window.title("Add Monthly Budget")
-    budget_window.geometry("400x300")
-
-    # Month input
-    tk.Label(budget_window, text="Enter Month (01-12):", font=("Arial", 10)).pack(pady=5)
-    month_entry = tk.Entry(budget_window, width=20)
-    month_entry.pack()
-
-    # Dynamic budget categories
-    budget_categories = []
-
-    def add_budget_category():
-        frame = tk.Frame(budget_window)
-        frame.pack(pady=5)
-
-        tk.Label(frame, text="Category:").pack(side=tk.LEFT, padx=5)
-        category_name = tk.Entry(frame, width=15)
-        category_name.pack(side=tk.LEFT, padx=5)
-
-        tk.Label(frame, text="Amount:").pack(side=tk.LEFT, padx=5)
-        category_amount = tk.Entry(frame, width=10)
-        category_amount.pack(side=tk.LEFT, padx=5)
-
-        budget_categories.append((category_name, category_amount))
-
-    def submit_budget():
-        month = month_entry.get().strip()
-
-        # Validation
-        if not month:
-            messagebox.showerror("Error", "Please enter a month")
-            return
-        
-        if not month.isdigit() or not (1 <= int(month) <= 12):
-            messagebox.showerror("Error", "Month must be 01-12")
-            return
-
-        budget_dict = {}
-
-        for category_widget, amount_widget in budget_categories:
-            category = category_widget.get().strip()
-            amount_str = amount_widget.get().strip()
-
-            if category and amount_str:
-                try:
-                    amount = int(amount_str)
-                    if amount < 0:
-                        messagebox.showerror("Error", "Amount cannot be negative")
-                        return
-                    budget_dict[category] = amount
-                except ValueError:
-                    messagebox.showerror("Error", "Enter valid numbers for amounts")
-                    return
-
-        if not budget_dict:
-            messagebox.showerror("Error", "Add at least one budget category")
-            return
-
-        monthly_budget[month] = budget_dict
-
-        save_data()
-        messagebox.showinfo("Success", "Budget Added Successfully!")
-        budget_window.destroy()
-
-    tk.Button(budget_window, text="Add Category", command=add_budget_category, bg="lightblue").pack(pady=5)
-    tk.Button(budget_window, text="Submit", command=submit_budget, bg="lightgreen").pack(pady=5)
-
-# ======================== EXPENSE MANAGEMENT ========================
-def add_expense_gui():
-    """Open window to add individual expenses."""
-    expense_window = tk.Toplevel(root)
-    expense_window.title("Add Expense")
-    expense_window.geometry("400x350")
-
-    tk.Label(expense_window, text="Enter Month (01-12):", font=("Arial", 10)).pack(pady=5)
-    month_entry = tk.Entry(expense_window, width=20)
-    month_entry.pack()
-
-    tk.Label(expense_window, text="Enter Date (DD-MM-YYYY):", font=("Arial", 10)).pack(pady=5)
-    date_entry = tk.Entry(expense_window, width=20)
-    date_entry.pack()
-
-    tk.Label(expense_window, text="Category:", font=("Arial", 10)).pack(pady=5)
-    category_entry = tk.Entry(expense_window, width=20)
-    category_entry.pack()
-
-    tk.Label(expense_window, text="Amount (₹):", font=("Arial", 10)).pack(pady=5)
-    amount_entry = tk.Entry(expense_window, width=20)
-    amount_entry.pack()
-
-    def submit_expense():
-        month = month_entry.get().strip()
-        date = date_entry.get().strip()
-        category = category_entry.get().strip()
-        amount_str = amount_entry.get().strip()
-
-        # Validation
-        if not month or not date or not category or not amount_str:
-            messagebox.showerror("Error", "Please fill all fields")
-            return
-
-        if not month.isdigit() or not (1 <= int(month) <= 12):
-            messagebox.showerror("Error", "Month must be 01-12")
-            return
-
-        # Validate date format
-        try:
-            datetime.strptime(date, "%d-%m-%Y")
-        except ValueError:
-            messagebox.showerror("Error", "Date format must be DD-MM-YYYY")
-            return
-
-        try:
-            amount = int(amount_str)
-            if amount < 0:
-                messagebox.showerror("Error", "Amount cannot be negative")
-                return
-        except ValueError:
-            messagebox.showerror("Error", "Amount must be a valid number")
-            return
-
-        # Add expense record
-        expense_records.append((month, date, category, amount))
-        account_balance[month] = account_balance.get(month, 0) - amount
-
-        save_data()
-
-        remaining = account_balance[month]
-        messagebox.showinfo("Success", f"Expense Added!\nRemaining Balance: ₹{remaining}")
-        expense_window.destroy()
-
-    tk.Button(expense_window, text="Submit", command=submit_expense, bg="lightgreen").pack(pady=5)
-
-# ======================== VISUALIZATIONS ========================
-def show_pie_chart():
-    """Display pie chart of expense distribution by category."""
-    if not expense_records:
-        messagebox.showerror("Error", "No expense data available!")
-        return
-
-    try:
-        df = pd.DataFrame(expense_records, columns=["Month", "Date", "Category", "Amount"])
+# ======================== CHART TAB ========================
+with tabs[3]:
+    st.subheader("Expense Distribution by Category")
+    if not st.session_state.expense_records:
+        st.warning("No expense data available yet.")
+    else:
+        df = pd.DataFrame(
+            st.session_state.expense_records, columns=["Month", "Date", "Category", "Amount"]
+        )
         category_totals = df.groupby("Category")["Amount"].sum()
 
-        plt.figure(figsize=(8, 6))
-        plt.pie(category_totals, labels=category_totals.index, autopct='%1.1f%%', startangle=90)
-        plt.title("Expense Distribution by Category", fontsize=14, fontweight='bold')
-        plt.tight_layout()
-        plt.show()
-    except Exception as e:
-        messagebox.showerror("Chart Error", f"Could not generate chart: {e}")
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.pie(category_totals, labels=category_totals.index, autopct="%1.1f%%", startangle=90)
+        ax.set_title("Expense Distribution by Category", fontweight="bold")
+        st.pyplot(fig)
 
-# ======================== REPORT GENERATION ========================
-def create_report():
-    """Generate Excel report with expense details and monthly summary."""
-    try:
-        # Create expense dataframe
-        if expense_records:
-            df_expenses = pd.DataFrame(expense_records, columns=["Month", "Date", "Category", "Amount"])
-        else:
-            df_expenses = pd.DataFrame(columns=["Month", "Date", "Category", "Amount"])
+# ======================== REPORT TAB ========================
+with tabs[4]:
+    st.subheader("Monthly Summary & Report")
 
-        # Create summary dataframe
-        summary_list = []
+    if st.session_state.expense_records:
+        df_expenses = pd.DataFrame(
+            st.session_state.expense_records, columns=["Month", "Date", "Category", "Amount"]
+        )
+    else:
+        df_expenses = pd.DataFrame(columns=["Month", "Date", "Category", "Amount"])
 
-        for month in monthly_income.keys():
-            total_income = sum(monthly_income.get(month, {}).values())
-            total_budget = sum(monthly_budget.get(month, {}).values())
-            total_expense = df_expenses[df_expenses["Month"] == month]["Amount"].sum()
-            
-            if pd.isna(total_expense):
-                total_expense = 0
-
-            net_saving = total_income - total_expense
-
-            summary_list.append({
+    summary_list = []
+    for month in sorted(st.session_state.monthly_income.keys()):
+        total_income = sum(st.session_state.monthly_income.get(month, {}).values())
+        total_budget = sum(st.session_state.monthly_budget.get(month, {}).values())
+        total_expense = df_expenses[df_expenses["Month"] == month]["Amount"].sum()
+        if pd.isna(total_expense):
+            total_expense = 0
+        net_saving = total_income - total_expense
+        summary_list.append(
+            {
                 "Month": month,
                 "Total Income": total_income,
                 "Total Budget": total_budget,
                 "Total Expense": int(total_expense),
-                "Saving/Loss": int(net_saving)
-            })
+                "Saving/Loss": int(net_saving),
+            }
+        )
 
-        df_summary = pd.DataFrame(summary_list)
+    df_summary = pd.DataFrame(summary_list)
+    st.dataframe(df_summary, use_container_width=True)
 
-        # Save to Desktop
-        desktop_path = os.path.join(os.environ['USERPROFILE'], 'Desktop')
-        file_path = os.path.join(desktop_path, "Finance_Report.xlsx")
+    if st.button("Generate Excel Report"):
+        from io import BytesIO
 
-        with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_expenses.to_excel(writer, sheet_name="Expense Details", index=False)
             df_summary.to_excel(writer, sheet_name="Monthly Summary", index=False)
 
-        # Open the file
-        os.startfile(file_path)
-        messagebox.showinfo("Success", f"Report Generated!\n\nSaved to: {file_path}")
+        st.download_button(
+            label="⬇️ Download Finance_Report.xlsx",
+            data=output.getvalue(),
+            file_name="Finance_Report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
-    except Exception as e:
-        messagebox.showerror("Report Error", f"Could not generate report: {e}")
-
-# ======================== MAIN WINDOW ========================
-root = tk.Tk()
-root.title("Personal Finance Manager")
-root.geometry("450x500")
-root.config(bg="#f0f0f0")
-
-# Header
-header = tk.Label(root, text="💰 Personal Finance Manager 💰", 
-                   font=("Arial", 16, "bold"), bg="#4CAF50", fg="white", pady=10)
-header.pack(fill=tk.X)
-
-# Buttons
-button_frame = tk.Frame(root, bg="#f0f0f0")
-button_frame.pack(pady=20)
-
-buttons_config = [
-    ("📊 Add Income", add_income_gui),
-    ("💼 Add Budget", add_budget_gui),
-    ("💸 Add Expense", add_expense_gui),
-    ("📈 Generate Report", create_report),
-    ("🥧 Show Pie Chart", show_pie_chart)
-]
-
-for text, command in buttons_config:
-    btn = tk.Button(button_frame, text=text, width=30, height=2, 
-                    command=command, font=("Arial", 10), bg="#2196F3", fg="white",
-                    activebackground="#0b7dda", cursor="hand2")
-    btn.pack(pady=8)
-
-# Footer
-footer = tk.Label(root, text="All data is saved automatically", 
-                  font=("Arial", 9, "italic"), bg="#f0f0f0", fg="gray")
-footer.pack(side=tk.BOTTOM, pady=10)
-
-# Load existing data
-load_data()
-
-# Run application
-root.mainloop()
+st.caption("All data is saved automatically")
